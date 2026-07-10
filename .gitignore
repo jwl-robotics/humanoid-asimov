@@ -1,0 +1,19 @@
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# vendored robot model (fetched via scripts/fetch_model.sh, not committed)
+external/
+
+# generated outputs
+renders/
+*.mp4
+data/
+logs/
+
+# OS
+.DS_Store

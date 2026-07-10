@@ -1,0 +1,81 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>IMU 101 — Primer</title>
+<style>
+:root{--bg:#0a0e12;--panel:#0e141b;--panel2:#0b1016;--inset:#090d11;--border:#1c2530;--border2:#26313f;
+--ink:#d7e2ee;--mut:#8a95a5;--dim:#5c6773;--faint:#3d4652;--cyan:#3fd0c9;--blue:#6ea8fe;--amber:#d9a23f; --coral:#fc4526;
+--green:#4ade80;--warn:#e0705f;--mono:ui-monospace,"SF Mono","JetBrains Mono",Consolas,monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--mut);font-family:var(--mono);font-size:13px;line-height:1.6;padding:0 0 70px;
+background-image:radial-gradient(1200px 600px at 70% -10%,rgba(63,208,201,.045),transparent 60%),
+linear-gradient(rgba(63,208,201,.02) 1px,transparent 1px),linear-gradient(90deg,rgba(63,208,201,.02) 1px,transparent 1px);
+background-size:auto,44px 44px,44px 44px}
+.wrap{max-width:1080px;margin:0 auto;padding:0 22px}
+a{color:var(--cyan);text-decoration:none}a:hover{text-shadow:0 0 8px rgba(63,208,201,.5)}
+header{border-bottom:1px solid var(--border);background:linear-gradient(180deg,rgba(14,20,27,.9),rgba(10,14,18,0))}
+.topline{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 0;font-size:10px;
+letter-spacing:.16em;color:var(--dim);text-transform:uppercase;border-bottom:1px dashed var(--border)}
+.back{font-size:10px;letter-spacing:.14em;text-transform:uppercase;opacity:.8}
+h1{margin:24px 0 8px;font-size:clamp(19px,3vw,28px);font-weight:700;color:var(--ink);letter-spacing:.1em;text-transform:uppercase}
+h1 .tick{color:var(--cyan)}
+.sub{max-width:820px;color:var(--mut);font-size:13px;margin-bottom:18px}
+.sub em{color:var(--ink);font-style:normal}
+.badges{display:flex;flex-wrap:wrap;gap:7px;margin:14px 0 26px}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+padding:3px 9px;border:1px solid var(--border2);border-radius:3px;color:var(--mut);background:rgba(255,255,255,.015)}
+.chip.ours{color:var(--cyan);border-color:rgba(63,208,201,.45)}.chip.warn{color:var(--warn);border-color:rgba(224,112,95,.5)}
+.chip.green{color:var(--green);border-color:rgba(74,222,128,.4)}.chip.amber{color:var(--amber);border-color:rgba(217,162,63,.45)}
+.sec{margin-top:32px}
+.seclabel{font-size:10px;letter-spacing:.22em;color:var(--dim);text-transform:uppercase;display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.seclabel b{color:var(--cyan);font-weight:600}.seclabel .rule{flex:1;height:1px;background:linear-gradient(90deg,var(--border),transparent)}
+p{margin:11px 0;max-width:860px}p b,li b{color:var(--ink);font-weight:600}
+.hi{color:var(--cyan)}.hw{color:var(--warn)}.hg{color:var(--green)}.ha{color:var(--amber)}
+ul{margin:10px 0 10px 4px;list-style:none}li{margin:7px 0;padding-left:18px;position:relative;max-width:860px}
+li:before{content:"▸";position:absolute;left:0;color:var(--faint)}
+.panel{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border);border-radius:8px;padding:16px 18px;margin:14px 0}
+.fig{background:#f7f8fa;border:1px solid var(--border2);border-radius:8px;padding:12px;margin:16px 0}
+.fig img{width:100%;display:block;border-radius:3px}
+.cap{font-size:11px;color:var(--dim);margin-top:9px;letter-spacing:.02em;text-align:center}
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:12px}
+th,td{text-align:left;padding:7px 11px;border-bottom:1px solid var(--border)}
+th{color:var(--dim);font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:600}
+td.n{color:var(--ink);text-align:right;font-variant-numeric:tabular-nums}
+tr:hover td{background:rgba(255,255,255,.014)}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--border);border:1px solid var(--border);border-radius:8px;overflow:hidden;margin:16px 0}
+.kv>div{background:var(--panel);padding:13px 15px}
+.kv .val{color:var(--cyan);font-size:19px;font-weight:700;font-variant-numeric:tabular-nums}
+.kv .val.warn{color:var(--warn)}.kv .val.green{color:var(--green)}
+.kv .lab{font-size:10px;color:var(--dim);letter-spacing:.1em;text-transform:uppercase;margin-top:3px}
+.kv .src{font-size:10px;color:var(--faint);margin-top:5px}
+.take{border-left:2px solid var(--cyan);padding:4px 0 4px 15px;margin:16px 0;color:var(--ink)}
+.take.warn{border-color:var(--warn)}.take .t{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);display:block;margin-bottom:3px}
+code{background:var(--inset);border:1px solid var(--border);border-radius:3px;padding:1px 5px;font-size:12px;color:var(--ink)}
+footer{margin-top:40px;padding-top:16px;border-top:1px dashed var(--border);font-size:10px;color:var(--faint);letter-spacing:.1em;text-transform:uppercase;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+.flow{display:flex;flex-wrap:wrap;gap:11px;align-items:stretch;margin:16px 0}
+.fbox{flex:1;min-width:190px;background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border2);border-radius:8px;padding:13px 15px}
+.fbox .ft{font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--cyan);margin-bottom:5px;font-weight:600}
+.fbox .fb{color:var(--mut);font-size:12px;line-height:1.5}
+.fbox .eq{font-family:var(--mono);color:var(--ink);font-size:12px;margin-top:8px;background:var(--inset);border:1px solid var(--border);border-radius:4px;padding:5px 9px;display:inline-block}
+.fbox.warn{border-color:rgba(224,112,95,.45)}.fbox.warn .ft{color:var(--warn)}
+.fbox.good{border-color:rgba(74,222,128,.42)}.fbox.good .ft{color:var(--green)}
+.farrow{display:flex;align-items:center;color:var(--faint);font-size:22px;flex:none;padding:0 2px}
+.turntable{background:#0a0e12;border:1px solid var(--border2);border-radius:8px;padding:12px 10px 10px;margin:16px 0;text-align:center}
+.turntable img{width:min(440px,92%);cursor:grab;border-radius:4px;touch-action:none;user-select:none;-webkit-user-drag:none}
+.turntable img:active{cursor:grabbing}
+.turntable input{width:min(440px,92%);margin-top:9px;accent-color:var(--cyan);cursor:pointer}
+.tthint{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin-top:5px}
+.ttlegend{display:flex;flex-wrap:wrap;justify-content:center;gap:15px;margin-top:8px;font-size:11px;font-weight:600}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0}
+@media(max-width:640px){.two{grid-template-columns:1fr}}
+.two .col{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border);border-radius:8px;padding:13px 15px}
+.two .col h5{font-size:10px;letter-spacing:.13em;text-transform:uppercase;margin-bottom:8px}
+.two .col.a h5{color:var(--cyan)}.two .col.b h5{color:var(--amber)}
+.two .col ul{margin:0}.two .col li{font-size:12px}
+</style></head><body>
+<header><div class="wrap"><div class="topline"><span>Humanoid State Estimation</span>
+<a class="back" href="index.html">&larr; back to dashboard</a></div>
+<h1><span style="color:var(--coral)">▍</span> IMU 101 &mdash; <span class="tick">From Raw Signals to a Pose</span></h1><div class="badges"><span class="chip">inertial navigation</span><span class="chip warn">why yaw drifts</span><span class="chip ours">the fusion idea</span></div><p class="sub">The conceptual bedrock of the whole project: what an IMU actually measures, how you turn it into orientation and position, and why <em>heading</em> is the one thing it can never pin down on its own. Read this first and stages 0&ndash;5 all click into place.</p></div></header>
+<div class="wrap"><div class="sec"><div class="seclabel"><b>What the IMU actually measures &mdash; not orientation, not position</b><span class="rule"></span></div><div class="flow"><div class="fbox"><div class="ft">Gyroscope</div><div class="fb">how fast you are <b>rotating</b>, about each body axis. A rate, not an angle.</div><div class="eq">&omega;&nbsp;&nbsp;(rad/s)</div></div><div class="fbox"><div class="ft">Accelerometer</div><div class="fb">your <b>proper acceleration</b> &mdash; your motion <em>minus gravity</em>, in the body frame. At rest it reads the 9.81 push of gravity, pointing &ldquo;up&rdquo;.</div><div class="eq">f = a &minus; g&nbsp;&nbsp;(m/s²)</div></div></div><p>Neither is orientation or position. You get those only by <b>integrating</b> &mdash; and integration is where the trouble starts.</p></div><div class="sec"><div class="seclabel"><b>Turning it into a pose &mdash; and where it drifts</b><span class="rule"></span></div><div class="flow"><div class="fbox"><div class="ft">gyro &rarr; orientation</div><div class="fb">integrate the angular rate over time.</div><div class="eq">R &larr; R &middot; Exp(&omega;&middot;dt)</div></div><div class="farrow">&rarr;</div><div class="fbox warn"><div class="ft">but it DRIFTS</div><div class="fb">bias + noise accumulate every step; orientation slowly wanders with nothing to check it.</div></div></div><div class="flow"><div class="fbox good"><div class="ft">accel &rarr; gravity &rarr; tilt anchor</div><div class="fb">when you are not accelerating hard, the accelerometer points along gravity &mdash; an <b>absolute &ldquo;down&rdquo;</b> that snaps <b>roll &amp; pitch</b> back. &check;</div></div><div class="farrow">&rarr;</div><div class="fbox warn"><div class="ft">&hellip;but nothing for yaw</div><div class="fb">gravity is vertical, so it says <em>nothing</em> about rotation <em>about</em> vertical.</div></div></div><div class="flow"><div class="fbox"><div class="ft">accel &rarr; position</div><div class="fb">rotate to world, subtract gravity, double-integrate.</div><div class="eq">p &larr; &int;&int; (R&middot;f + g) dt²</div></div><div class="farrow">&rarr;</div><div class="fbox warn"><div class="ft">drifts FAST</div><div class="fb">double-integrating noise grows the error like t^1.5&ndash;t² &mdash; useless within seconds without help.</div></div></div></div><div class="sec"><div class="seclabel"><b>Why yaw is the hard one</b><span class="rule"></span></div><p><b>It is the gravity reference.</b> Tilt the robot and gravity shows up in the &ldquo;wrong&rdquo; accelerometer axes, so the filter can always correct <b>roll and pitch</b> &mdash; they are <em>observable</em>, they don&rsquo;t drift. But spin about the <em>vertical</em> axis (<b>yaw / heading</b>) and gravity doesn&rsquo;t move at all &mdash; the accelerometer gives <b>zero</b> information about it. Yaw can only come from the drifting gyro. No gravity-equivalent heading reference exists <em>in the IMU</em> &mdash; until a camera watches the world turn.</p><div class="kv"><div><div class="val green">roll / pitch</div><div class="lab">observable</div><div class="src">gravity anchors them</div></div><div><div class="val warn">yaw</div><div class="lab">unobservable from IMU</div><div class="src">no reference &rarr; drifts</div></div><div><div class="val">position</div><div class="lab">drifts fastest</div><div class="src">needs legs + vision</div></div></div></div><div class="sec"><div class="seclabel"><b>Where legs and the camera come in &mdash; the whole project in one arrow</b><span class="rule"></span></div><div class="flow"><div class="fbox"><div class="ft">Legs (Stage 1)</div><div class="fb">a planted foot is a fixed anchor &rarr; gives <b>velocity</b>. But leg motion is in the <em>body</em> frame; placing it in the world needs your heading. Legs <b>depend on</b> yaw &mdash; they can&rsquo;t fix it.</div></div><div class="farrow">&rarr;</div><div class="fbox good"><div class="ft">Camera (Stage 2)</div><div class="fb">watching fixed features rotate gives an <b>independent rotation</b> the IMU can&rsquo;t &mdash; it finally pins the <b>yaw drift + the gyro-z bias</b>.</div></div></div><div class="take"><span class="t">The one idea</span>Every stage is the same move: <b>integration drifts, so add a reference that bounds it</b> &mdash; gravity for tilt, a planted foot for velocity, the camera for heading, and (Stage 3) the camera calibrating itself. That is the entire arc.</div></div>
+<footer><span>Personal robotics project — state estimation &amp; navigation</span><span>updated 2026-07-09</span></footer>
+</div>
+<script>if(window.self!==window.top){document.querySelectorAll('.back,a[href="index.html"]').forEach(function(e){e.style.display='none';});}</script>
+</body></html>
