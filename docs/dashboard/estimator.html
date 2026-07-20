@@ -297,7 +297,10 @@
   .vtxt{font-family:var(--mono);font-size:9px;letter-spacing:.04em}
   .figs{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px;align-items:start}
   @media (max-width:900px){.figs{grid-template-columns:1fr}}
-  .figimg{display:block;width:100%;height:auto;border:1px solid var(--border);border-radius:4px;background:var(--inset)}
+  .figimg{display:block;width:100%;height:auto;border:1px solid var(--border);border-radius:4px;background:var(--inset);cursor:zoom-in}
+  #lb{position:fixed;inset:0;background:rgba(6,9,12,.94);display:none;align-items:center;justify-content:center;z-index:99;cursor:zoom-out;padding:2vh 2vw}
+  #lb.on{display:flex}
+  #lb img{max-width:96vw;max-height:96vh;width:auto;height:auto;border:1px solid var(--border);border-radius:6px;box-shadow:0 10px 44px rgba(0,0,0,.65)}
 
   /* honesty banner (mirror of index.html) */
   .honesty{
@@ -428,7 +431,8 @@
           fires on stance <span class="sep">·</span> makes tilt + <b>b<sub>g</sub></b> observable —
           <b>b<sub>c</sub></b> soaks up the systematic
         </div>
-        <div class="src">estimator.py — RobotKinematics · LegOdometry · contact update</div>
+        <div class="strip s-amber">the stance flag itself is derived from the engine's contact force (&gt;1&#8201;N) — this robot has no foot sensor, so real hardware needs a contact detector (motor current / joint torque); the filter consumes a clean boolean, an interface-compatible swap</div>
+        <div class="src">estimator.py — RobotKinematics · LegOdometry · contact update · sensors.py contacts()</div>
       </div>
     </div>
 
@@ -1017,5 +1021,10 @@ const NPTS = GT_XY.length;
 })();
 </script>
 <script>if(window.self!==window.top){document.querySelectorAll('.back,a[href="index.html"]').forEach(function(e){e.style.display='none';});}</script>
+<script>(function(){var lb=document.createElement('div');lb.id='lb';var im=document.createElement('img');
+lb.appendChild(im);document.body.appendChild(lb);function close(){lb.classList.remove('on');im.src='';}
+lb.addEventListener('click',close);document.addEventListener('keydown',function(e){if(e.key==='Escape')close();});
+document.querySelectorAll('img.figimg').forEach(function(el){el.addEventListener('click',function(){
+im.src=el.src;im.alt=el.alt||'';lb.classList.add('on');});});})();</script>
 </body>
 </html>

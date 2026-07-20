@@ -37,7 +37,7 @@
                        links on the ESTIMATOR node + roadmap cards). Add future
                        sub-pages the same way.
 
-  Sources of truth: docs/DESIGN.md, docs/STAGE1_ESKF_REVIEW.md,
+  Sources of truth: docs/DESIGN.md, docs/STAGE0_REVIEW.md, docs/STAGE1_ESKF_REVIEW.md,
   docs/STAGE2_VIO_DESIGN.md, src/humanoid_asimov/{scene,walk,sensors,estimator,vision,vio}.py,
   data/walk_dataset.npz, data/loop_tracks.npz.
   ============================================================================
@@ -313,7 +313,7 @@
   <div class="wrap">
     <div class="topline">
       <span>humanoid-asimov <span style="color:var(--faint)">/</span> estimator console</span>
-      <span class="live"><span class="dot" style="vertical-align:1px"></span>&nbsp;SIM ONLINE&nbsp;·&nbsp;UPDATED <span id="updated">2026-07-09</span></span>
+      <span class="live"><span class="dot" style="vertical-align:1px"></span>&nbsp;SIM ONLINE&nbsp;·&nbsp;UPDATED <span id="updated">2026-07-21</span></span>
     </div>
     <h1><span class="tick">▍</span>HUMANOID STATE ESTIMATION</h1>
     <p class="oneliner">
@@ -433,14 +433,15 @@
 
         <!-- col 3 · estimator -->
         <div class="node" id="nd-est" style="left:810px;top:160px;width:330px">
-          <h3><span class="dot"></span>STATE ESTIMATOR<a class="dlink" href="estimator.html">▸ deep dive</a></h3>
-          <div class="chips"><span class="chip c-ours">OURS</span><span class="chip c-green">✓ STAGES 1–3 — LANDED</span><span class="chip">FD-VERIFIED</span></div>
+          <h3><span class="dot"></span>STATE ESTIMATOR<a class="dlink" href="estimator.html">▸ estimator deep dive</a></h3>
+          <div class="chips"><span class="chip c-ours">OURS</span><span class="chip c-green">✓ STAGES 1–4 — LANDED</span><span class="chip">FD-VERIFIED</span></div>
           <div class="blk" id="blk-preint"><span class="t">IMU strapdown predict</span>R · v · p @ 500 Hz + full covariance (F, Q)</div>
           <div class="blk" id="blk-lego"><span class="t">leg odometry</span>contact foot anchor → FK · no-slip velocity measurement</div>
           <div class="blkarrow">▼</div>
           <div class="blk core" id="blk-ekf"><span class="t">error-state EKF · 18-dim</span>p · v · R · b<sub>g</sub> · b<sub>a</sub> + slip bias b<sub>c</sub> — update on contact</div>
           <div class="blk" id="blk-vio"><span class="t">visual rel-rotation · stage 2 ✓</span>anchored SO(3) update on a cloned rotation (18→21) — observes yaw drift + b<sub>g,z</sub> <a class="dlink" href="vio.html">▸ vio</a> <a class="dlink" href="frontend.html">▸ front-end</a></div>
-          <div class="blk" id="blk-calib"><span class="t">online auto-calibration · stage 3 ✓</span>camera-mount extrinsic δφ<sub>HC</sub> + a time-offset t<sub>d</sub> state (21→25) — observable mount axis recovered online; t<sub>d</sub> held frozen (loop can't excite it) <a class="dlink" href="calib.html">▸ calib</a></div>
+          <div class="blk" id="blk-calib"><span class="t">online auto-calibration · stage 3 ✓</span>camera-mount extrinsic δφ<sub>HC</sub> recovered online (21→25) — a gentle neck scan (3b) halves the weak axis; t<sub>d</sub> unfrozen recovers a 10 ms offset to +0.6 ms <a class="dlink" href="calib.html">▸ calib</a></div>
+          <div class="blk" id="blk-timing"><span class="t">delay compensation · stage 4b ✓</span>StampedStream + ReplayFilter: stamped late measurements fuse at their stamp, buffered IMU replays forward — 15 ms latency 6.46→0.23% <a class="dlink" href="embedded.html">▸ timing</a></div>
           <div class="src">src/humanoid_asimov/{estimator,vision,vio,calib}.py · scripts/run_vio.py · run_calib.py</div>
         </div>
 
@@ -448,7 +449,7 @@
         <div class="node" id="nd-state" style="left:1230px;top:170px;width:290px">
           <h3><span class="dot"></span>ESTIMATED STATE</h3>
           <div class="chips"><span class="chip c-ours">OURS</span><span class="chip">6-DoF + biases</span></div>
-          <div class="rd">base pose <b>p, R</b> <span class="sep">·</span> velocity <b>v</b> <span class="sep">·</span> biases <b>b<sub>g</sub>, b<sub>a</sub>, b<sub>c</sub></b><br>@ 500 Hz — from onboard sensors only<br>loop drift <b>0.15%</b> w/ vision (5-seed median) <span class="sep">·</span> vel RMSE <b>0.045 m/s</b> (stage 1)</div>
+          <div class="rd">base pose <b>p, R</b> <span class="sep">·</span> velocity <b>v</b> <span class="sep">·</span> biases <b>b<sub>g</sub>, b<sub>a</sub>, b<sub>c</sub></b><br>@ 500 Hz — from onboard sensors only<br>loop drift <b>0.15%</b> w/ vision (5-seed median) <span class="sep">·</span> vel RMSE <b>0.045 m/s</b></div>
           <div class="src">stage-2 output · vio.py</div>
         </div>
 
@@ -471,6 +472,10 @@
       This is <em>not true dynamic walking</em> — it exists only to produce self-consistent IMU / encoder / contact
       data + ground truth for estimator development. The estimator never sees the gait targets, the support wrench,
       or the ground truth. The real RL locomotion policy is the designated next-milestone upgrade.
+      Related: the <em>foot-contact flag</em> is derived from the physics engine's contact force
+      (&gt;1&#8201;N threshold) — this robot carries no foot-force sensor, so real hardware needs a contact
+      <em>detector</em> (motor current / joint torque); the estimator consumes a clean boolean, so that
+      swap is interface-compatible.
     </div>
   </section>
 
@@ -586,13 +591,13 @@
         <div class="snum"><span>STAGE 1</span><span class="st">✅ DONE</span></div>
         <div class="sname">Contact-Aided ESKF</div>
         <div class="sdesc">18-dim error-state EKF: IMU predict + no-slip update + online b<sub>g</sub>·b<sub>a</sub>·b<sub>c</sub> · drift 0.32% · math FD-verified</div>
-        <a class="dlink" href="estimator.html">▸ deep dive</a>
+        <a class="dlink" href="estimator.html">▸ estimator deep dive</a>
       </li>
       <li class="next">
         <div class="snum"><span>STAGE 1.5</span><span class="st">◌ PARKED</span></div>
         <div class="sname">Consistency · InEKF</div>
         <div class="sdesc">right-invariant EKF w/ foot-position states → white residual · parked: stage-2 vision update is gauge-safe by construction</div>
-        <a class="dlink" href="estimator.html">▸ deep dive</a>
+        <a class="dlink" href="estimator.html">▸ estimator deep dive</a>
       </li>
       <li class="done">
         <div class="snum"><span>STAGE 2</span><span class="st">✅ DONE</span></div>
@@ -603,20 +608,38 @@
       <li class="done">
         <div class="snum"><span>STAGE 3</span><span class="st">✅ DONE</span></div>
         <div class="sname">Online Auto-Calib</div>
-        <div class="sdesc">camera-mount extrinsic δφ<sub>HC</sub> recovered online (state 21→25; a camera–IMU time-offset t<sub>d</sub> state rides along, held frozen — this constant-rate loop sits at its observability degeneracy) · recovers an injected 3.1° mount error 87% on the observable axis · Jacobians FD-verified · covariance is observability-honest</div>
-        <a class="dlink" href="calib.html">▸ deep dive</a>
+        <div class="sdesc">camera-mount extrinsic δφ<sub>HC</sub> recovered online (state 21→25; the camera–IMU time-offset t<sub>d</sub> is carried but stays frozen — this constant-rate loop can't excite it) · recovers an injected 3.1° mount error 87% on the observable axis · Jacobians FD-verified · covariance is observability-honest</div>
+        <a class="dlink" href="calib.html">▸ calibration deep dive</a>
+      </li>
+      <li class="done">
+        <div class="snum"><span>STAGE 3B</span><span class="st">✅ DONE</span></div>
+        <div class="sname">Active Calibration</div>
+        <div class="sdesc">gentle neck-scan (~5° · 0.3 Hz) while walking, mount + t<sub>d</sub> unfrozen vs injected 3.1° + 10 ms errors · weak-axis funnel σ 7.5→4.2 mrad, error 15.5→7.3 · t<sub>d</sub> recovered to +0.6 ms with NO scan — the gait ripple already excites it · front-end survives the scan (74–77% flat)</div>
+        <a class="dlink" href="calib.html">▸ calibration deep dive</a>
       </li>
       <li class="done">
         <div class="snum"><span>STAGE 4</span><span class="st">✅ DONE</span></div>
         <div class="sname">Sim-to-Real Noise</div>
         <div class="sdesc">embedded pipeline: quantization · CAN stagger · latency · jitter · finding: TIMING dominates (latency 5 ms → 2.04% drift), amplitude negligible</div>
-        <a class="dlink" href="embedded.html">▸ deep dive</a>
+        <a class="dlink" href="embedded.html">▸ sim-to-real deep dive</a>
+      </li>
+      <li class="done">
+        <div class="snum"><span>STAGE 4B</span><span class="st">✅ DONE</span></div>
+        <div class="sname">Delay Compensation</div>
+        <div class="sdesc">source capture timestamps + buffer-and-replay fusion (timing.py): late measurements fuse <i>at their stamp</i> and replay forward · 15 ms latency 6.46→0.23% drift · position NEES 26→2.5 (confidently-wrong → honest) · flat to 20 ms · zero delay reduces bit-for-bit to the naive loop</div>
+        <a class="dlink" href="embedded.html">▸ sim-to-real deep dive</a>
       </li>
       <li class="done">
         <div class="snum"><span>STAGE 5</span><span class="st">✅ DONE</span></div>
         <div class="sname">Nav Slice</div>
         <div class="sdesc">waypoint planner → VelocityCommand(vx, vy, vyaw) on the <i>estimated</i> state · reaches 4/4 waypoints closed-loop · 7.1 cm / 0.59% from truth</div>
-        <a class="dlink" href="nav.html">▸ deep dive</a>
+        <a class="dlink" href="nav.html">▸ navigation deep dive</a>
+      </li>
+      <li class="done">
+        <div class="snum"><span>STAGE 5B</span><span class="st">✅ DONE</span></div>
+        <div class="sname">Closed-Loop Showdown</div>
+        <div class="sdesc">the same 3-circuit course under four estimator configs, all steering on their own estimate · replay-compensated 5 ms latency restores the clean numbers (terminal yaw 5.7°→3.7°) · the decisive failure is contact over-trust, not latency: σ<sub>c</sub>=0.05 finishes 10/12 @ 98° yaw — in-loop VIO rescues it to 12/12 @ 17°</div>
+        <a class="dlink" href="nav.html">▸ navigation deep dive</a>
       </li>
     </ol>
   </section>
@@ -631,13 +654,25 @@
       <div class="mt accent"><div class="v">0.15<small>&#8201;%</small></div><div class="l">VIO loop drift (5-seed median) — honest 2 mrad</div><div class="s">beats ESKF ~0.49% on every seed · IRLS-refit front-end · pins b<sub>g,z</sub> · stage 2</div></div>
       <div class="mt accent"><div class="v">0.19<small>&#8201;mrad/s</small></div><div class="l">b<sub>g,z</sub> error w/ vision (5-seed median) — was 1.66 blind</div><div class="s">provably unobservable from IMU+contact · run_vio.py sweep</div></div>
       <div class="mt"><div class="v">~2<small>&#8201;mrad</small></div><div class="l">front-end rotation accuracy · median (IRLS refit)</div><div class="s">2.06 mrad · ~34 SO(3) meas/lap · run_frontend.py</div></div>
+      <div class="mt accent"><div class="v">7.5→4.2<small>&#8201;mrad</small></div><div class="l">weak-axis funnel σ with a ~5° neck scan</div><div class="s">mount error 15.5→7.3 mrad · zero front-end cost · stage 3b · run_neckscan.py</div></div>
+      <div class="mt accent"><div class="v">+0.6<small>&#8201;ms</small></div><div class="l">t<sub>d</sub> recovered from a 10 ms injected clock offset — no scan needed</div><div class="s">σ 0.5 ms · the gait ripple excites it · stage 3b</div></div>
+      <div class="mt accent"><div class="v">6.46→0.23<small>&#8201;%</small></div><div class="l">drift at 15 ms latency · naive → replay-compensated</div><div class="s">flat to 20 ms · 3-seed medians hold 0.23–0.24% · stage 4b · run_timing.py</div></div>
+      <div class="mt accent"><div class="v">26→2.5</div><div class="l">position NEES at 15 ms latency — honesty restored</div><div class="s">clean is 2.7 · confidently-wrong → calibrated · stage 4b</div></div>
+      <div class="mt accent"><div class="v">12/12</div><div class="l">waypoints · 3-circuit closed loop, replay-compensated 5 ms latency</div><div class="s">ties clean (yaw 3.7° vs naive 5.7°) · contact over-trust is what breaks it, not latency · stage 5b · run_nav5b.py</div></div>
       <div class="mt"><div class="v">0.32<small>&#8201;%</small></div><div class="l">ESKF drift · straight walk · stage 1</div><div class="s">1.8 cm / 5.8 m · beats 0.54% dead reckoning</div></div>
       <div class="mt"><div class="v">+0.11<small>&#8201;mrad/s</small></div><div class="l">gyro-bias y error — was +2.53</div><div class="s">slip bias b<sub>c</sub> de-biased it · run_nees.py</div></div>
       <div class="mt"><div class="v">0.03<small>&#8201;%</small></div><div class="l">leg-odom drift floor · true attitude</div><div class="s">the attitude gap stages 1–2 closed in on</div></div>
-      <div class="mt"><div class="v">0.045<small>&#8201;m/s</small></div><div class="l">ESKF velocity RMSE</div><div class="s">the fused deliverable · run_estimator.py</div></div>
+      <div class="mt"><div class="v">0.045<small>&#8201;m/s</small></div><div class="l">ESKF velocity RMSE (stage 1)</div><div class="s">the fused deliverable · run_estimator.py</div></div>
       <div class="mt"><div class="v">M=10</div><div class="l">seeds · NEES/NIS consistency harness</div><div class="s">per-block ANEES + NIS whiteness · caught the slip</div></div>
       <div class="mt"><div class="v">~1e-7</div><div class="l">FD check — every Jacobian verified</div><div class="s">stage-1 blocks · VIO fusion H to ~1e-10</div></div>
+      <div class="mt"><div class="v">0.56<small>&#8201;m/s</small></div><div class="l">sustained walk speed</div><div class="s">10–12 s runs · STAGE0_REVIEW</div></div>
       <div class="mt warn"><div class="v">44<small>&#8201;% BW</small></div><div class="l">offloaded by torso support (crane)</div><div class="s">load-bearing dev stand-in · falls @ 0.74 s without</div></div>
+      <div class="mt"><div class="v">~7<small>&#8201;mm</small></div><div class="l">foot slip per stance</div><div class="s">the stage-1 culprit — now estimated online as b<sub>c</sub></div></div>
+      <div class="mt"><div class="v">27<small>&#8201;DOF</small></div><div class="l">articulated joints (incl. 2 passive toes)</div><div class="s">+ 6-DoF floating base · model</div></div>
+      <div class="mt"><div class="v">15</div><div class="l">estimator-visible encoders</div><div class="s">12 leg + waist + 2 neck · sensors.py</div></div>
+      <div class="mt"><div class="v">500<small>&#8201;Hz</small></div><div class="l">physics + IMU rate</div><div class="s">dt = 2 ms · model.opt</div></div>
+      <div class="mt"><div class="v">1.25<small>&#8201;Hz</small></div><div class="l">gait frequency</div><div class="s">0.8 s cycle · gait CSV</div></div>
+      <div class="mt"><div class="v">32.4<small>&#8201;kg</small></div><div class="l">total robot mass</div><div class="s">Σ body_mass · model</div></div>
     </div>
   </section>
 
@@ -649,12 +684,20 @@
     <div class="threecol">
       <div class="card">
         <h4><span class="dot"></span>BUILT — STAGES 0 → 5</h4>
-        <div class="kv">
-          <span class="ok">✓</span> Stages 0–5 landed: 9 modules in <b>src/humanoid_asimov/</b>
-          (scene · walk · sensors · estimator · vision · vio · calib · embedded · nav), the per-stage
-          <b>scripts/</b> (run_* entrypoints · check_*_jacobian FD gates · viewers), and <b>tests/</b>.
-          The full module map is the §01 dataflow above; the run commands are in the repo README.
-        </div>
+        <ul>
+          <li><span class="ok">✓</span> <b>scene.py</b> — head camera via MjSpec (absent upstream) + firm foot contacts + visual-only feature room</li>
+          <li><span class="ok">✓</span> <b>walk.py</b> — PD gait black box + support · post-step-aligned logger · loop_heading (24 s / 360° lap)</li>
+          <li><span class="ok">✓</span> <b>sensors.py</b> — estimator-visible vs eval-only split + LSM6DSOX-scale ImuNoise</li>
+          <li><span class="ok">✓</span> <b>estimator.py</b> — 18-dim contact-aided ESKF: strapdown + no-slip update + online b<sub>g</sub>·b<sub>a</sub>·b<sub>c</sub></li>
+          <li><span class="ok">✓</span> <b>vision.py</b> — KLT front-end: bucketed corners · FB-checked tracks · anchored essential-matrix rotation (IRLS-refit)</li>
+          <li><span class="ok">✓</span> <b>vio.py</b> — VioESKF: stochastic clone (18→21) + gauge-safe SO(3) update · χ²(3) gate</li>
+          <li><span class="ok">✓</span> <b>calib.py</b> — CalibVioESKF: mount extrinsic δφ<sub>HC</sub> + time offset t<sub>d</sub> (21→25), FD-verified</li>
+          <li><span class="ok">✓</span> <b>embedded.py</b> — quantization · CAN stagger · latency · jitter noise model + ablation</li>
+          <li><span class="ok">✓</span> <b>timing.py</b> — StampedStream + ReplayFilter: buffer-and-replay fusion of stamped delayed measurements (zero delay ⇒ bit-identical to naive)</li>
+          <li><span class="ok">✓</span> <b>nav.py</b> — WaypointNavigator → VelocityCommand(vx, vy, vyaw) closed-loop</li>
+          <li><span class="ok">✓</span> <b>scripts/</b> — run_estimator · run_nees (M=10) · run_frontend · run_vio (+ multilap) · run_calib · run_neckscan · run_embedded · run_timing · run_nav · run_nav5b · run_livedrift · check_eskf/vio/calib_jacobian</li>
+          <li><span class="ok">✓</span> <b>tests/</b> — pytest: head_cam present · walks ≥1.5 m/4 s upright, no NaNs · log schema</li>
+        </ul>
       </div>
       <div class="card">
         <h4><span class="dot"></span>DATASET — walk_dataset.npz</h4>
@@ -674,7 +717,7 @@
         <ul>
           <li><span class="todo">▸</span> swap the dev gait for the released RL locomotion policy on the same harness — first casualties: σ<sub>contact</sub>, slip-bias magnitude (re-measure; Stage-4 order: timestamps first)</li>
           <li><span class="todo">▸</span> extend the NEES/NIS harness to the vision path (VioESKF/CalibVioESKF) — the stated next validation task</li>
-          <li><span class="todo">▸</span> t<sub>d</sub> + full 3-axis mount recovery on a rate-varying trajectory (neck_scan / speed steps already plumbed)</li>
+          <li><span class="todo">▸</span> reprojection layer to reach the mount <i>translation</i> p<sub>HC</sub> (per-keyframe bearings already persisted) — rotation + t<sub>d</sub> landed in 3b</li>
           <li><span class="todo">▸</span> motion-scaled σ<sub>contact</sub> (turn-rate-aware R<sub>c</sub>) — formalize the stage-2 turn-slip lesson</li>
           <li><span class="todo">▸</span> (parked) stage 1.5 InEKF rebuild — colored contact NIS carried, unchanged by vision</li>
           <li><span class="todo">▸</span> anchor → keyframe map: loop-closure relocalization for an absolute-yaw bound</li>
@@ -684,9 +727,9 @@
   </section>
 
   <footer>
-    <b>provenance</b> — src/humanoid_asimov/{scene, walk, sensors, estimator, vision, vio, calib, embedded, nav}.py · scripts/ ·
-    docs/DESIGN.md · docs/STAGE1_ESKF_REVIEW.md · docs/STAGE2_VIO_DESIGN.md ·
-    docs/STAGE2_FRONTEND_DESIGN.md · docs/STAGE3_CALIB_DESIGN.md · docs/SELF_REVIEW.md ·
+    <b>provenance</b> — src/humanoid_asimov/{scene, walk, sensors, estimator, vision, vio, calib, embedded, timing, nav}.py · scripts/ ·
+    docs/DESIGN.md · docs/STAGE0_REVIEW.md · docs/STAGE1_ESKF_REVIEW.md · docs/STAGE2_VIO_DESIGN.md ·
+    docs/STAGE2_FRONTEND_DESIGN.md · docs/STAGE3_CALIB_DESIGN.md · docs/CAPSTONE_REVIEW.md ·
     robot model + gait CSV vendored from the open Asimov humanoid platform (fetched, not redistributed)<br>
     <b>sub-pages</b> — <a href="stage0.html" style="color:var(--cyan);text-decoration:none">stage0</a> ·
     <a href="imu101.html" style="color:var(--cyan);text-decoration:none">imu101</a> ·

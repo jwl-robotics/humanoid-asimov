@@ -209,16 +209,19 @@ def simulate(seconds=8.0, render_camera=None, fps=30, width=640, height=480,
         log["gt_bg"].append(imu_noise.gyro_bias.copy() if imu_noise is not None else np.zeros(3))
         log["gt_ba"].append(imu_noise.accel_bias.copy() if imu_noise is not None else np.zeros(3))
 
+        frame = None                          # rendered BEFORE the hook so an in-loop VIO can consume it
+        if renderer is not None and data.time >= next_frame:
+            renderer.update_scene(data, render_camera)
+            frame = renderer.render().copy()
+            frames.append(frame)
+            frame_t.append(data.time - t0)
+            next_frame += 1.0 / fps
+
         if control_hook is not None:          # closed-loop navigation: estimator + planner steer ctrl live
             control_hook(data.time - t0, imu.gyro, imu.accel, q, qd,
                          [con["left"]["in_contact"], con["right"]["in_contact"]], dt, ctrl,
-                         pos, quat)           # gt pose passed for estimator INIT only (known start reference)
-
-        if renderer is not None and data.time >= next_frame:
-            renderer.update_scene(data, render_camera)
-            frames.append(renderer.render().copy())
-            frame_t.append(data.time - t0)
-            next_frame += 1.0 / fps
+                         pos, quat,           # gt pose passed for estimator INIT only (known start reference)
+                         frame=frame)         # head-cam frame when one was rendered this step (else None)
 
     out = {k: np.array(v) for k, v in log.items()}
     out["joint_names"] = list(sensors.joint_names)

@@ -5,21 +5,28 @@ result plots as base64 (self-contained, opens offline). Regenerate the plots fir
 
     .venv/bin/python scripts/run_walk.py             # data/walk_dataset.npz (embedded needs it)
     .venv/bin/python scripts/run_calib.py            # renders/stage3_calib.png
+    .venv/bin/python scripts/run_neckscan.py         # renders/stage3_neckscan.png
     .venv/bin/python scripts/run_embedded.py         # renders/stage4_embedded.png
+    .venv/bin/python scripts/run_timing.py           # renders/stage4_timing.png
     .venv/bin/python scripts/run_nav.py              # renders/stage5_nav.png
+    .venv/bin/python scripts/run_nav5b.py all        # data/nav5b_*.npz + nav5b_tracks.json
+                                                     #   + renders/stage5b_{nav,tracks,gap}.png
     .venv/bin/python scripts/run_livedrift.py        # renders/livedrift.png
     .venv/bin/python scripts/plot_frontend_result.py # renders/stage2_frontend.png
     .venv/bin/python scripts/render_robot_sensors.py # renders/robot_sensors.png + turntable/
     .venv/bin/python scripts/build_dashboard.py
 """
 import base64
+import json
 import os
+
+from trackchart import TRACKCHART_JS, chart_css
 
 HERE = os.path.dirname(__file__)
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
 DASH = os.path.join(ROOT, "docs", "dashboard")
 RENDERS = os.path.join(ROOT, "renders")
-UPDATED = "2026-07-09"
+UPDATED = "2026-07-21"
 
 CSS = """
 :root{--bg:#0a0e12;--panel:#0e141b;--panel2:#0b1016;--inset:#090d11;--border:#1c2530;--border2:#26313f;
@@ -54,7 +61,10 @@ ul{margin:10px 0 10px 4px;list-style:none}li{margin:7px 0;padding-left:18px;posi
 li:before{content:"▸";position:absolute;left:0;color:var(--faint)}
 .panel{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border);border-radius:8px;padding:16px 18px;margin:14px 0}
 .fig{background:#f7f8fa;border:1px solid var(--border2);border-radius:8px;padding:12px;margin:16px 0}
-.fig img{width:100%;display:block;border-radius:3px}
+.fig img{width:100%;display:block;border-radius:3px;cursor:zoom-in}
+#lb{position:fixed;inset:0;background:rgba(6,9,12,.94);display:none;align-items:center;justify-content:center;z-index:99;cursor:zoom-out;padding:2vh 2vw}
+#lb.on{display:flex}
+#lb img{max-width:96vw;max-height:96vh;width:auto;height:auto;border:1px solid var(--border2);border-radius:6px;box-shadow:0 10px 44px rgba(0,0,0,.65)}
 .cap{font-size:11px;color:var(--dim);margin-top:9px;letter-spacing:.02em;text-align:center}
 table{border-collapse:collapse;width:100%;margin:14px 0;font-size:12px}
 th,td{text-align:left;padding:7px 11px;border-bottom:1px solid var(--border)}
@@ -99,10 +109,10 @@ def img_uri(name):
         return "data:image/png;base64," + base64.b64encode(f.read()).decode()
 
 
-def shell(title, tab, badges, sub, body):
+def shell(title, tab, badges, sub, body, extra_css=""):
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>{tab}</title>
-<style>{CSS}</style></head><body>
+<style>{CSS}{extra_css}</style></head><body>
 <header><div class="wrap"><div class="topline"><span>Humanoid State Estimation</span>
 <a class="back" href="index.html">&larr; back to dashboard</a></div>
 <h1><span style="color:var(--coral)">▍</span> {title}</h1><div class="badges">{badges}</div><p class="sub">{sub}</p></div></header>
@@ -110,6 +120,11 @@ def shell(title, tab, badges, sub, body):
 <footer><span>Personal robotics project — state estimation &amp; navigation</span><span>updated {UPDATED}</span></footer>
 </div>
 <script>if(window.self!==window.top){{document.querySelectorAll('.back,a[href="index.html"]').forEach(function(e){{e.style.display='none';}});}}</script>
+<script>(function(){{var lb=document.createElement('div');lb.id='lb';var im=document.createElement('img');
+lb.appendChild(im);document.body.appendChild(lb);function close(){{lb.classList.remove('on');im.src='';}}
+lb.addEventListener('click',close);document.addEventListener('keydown',function(e){{if(e.key==='Escape')close();}});
+document.querySelectorAll('.fig img').forEach(function(el){{el.addEventListener('click',function(){{
+im.src=el.src;im.alt=el.alt||'';lb.classList.add('on');}});}});}})();</script>
 </body></html>"""
 
 
@@ -117,8 +132,9 @@ def sec(label, body):
     return f'<div class="sec"><div class="seclabel"><b>{label}</b><span class="rule"></span></div>{body}</div>'
 
 
-def fig(name, cap):
-    return f'<div class="fig"><img src="{img_uri(name)}" alt="{cap}"><div class="cap">{cap}</div></div>'
+def fig(name, cap, eid=None):
+    div_id = f' id="{eid}"' if eid else ""
+    return f'<div class="fig"{div_id}><img src="{img_uri(name)}" alt="{cap}"><div class="cap">{cap}</div></div>'
 
 
 def turntable(n=20):
@@ -149,12 +165,14 @@ calib = shell(
     'Stage 3 &mdash; <span class="tick">Online Self-Calibration</span>',
     "Stage 3 — Self-Calibration",
     '<span class="chip ours">camera&ndash;IMU extrinsic</span><span class="chip ours">time offset</span>'
-    '<span class="chip green">Jacobians FD-verified</span><span class="chip amber">observability-honest</span>',
+    '<span class="chip green">Jacobians FD-verified</span><span class="chip amber">observability-honest</span>'
+    '<span class="chip ours">neck-scan retry</span>',
     "While walking its loop, the robot estimates its <em>own</em> camera-mount rotation online &mdash; no "
     "calibration rig, only the onboard sensors the VIO already uses. It also carries an FD-verified "
-    "camera&ndash;IMU time-offset state (<code>td</code>), but this constant-rate loop sits at that state's "
-    "observability degeneracy, so <code>td</code> is held <em>frozen</em> here while the mount calibrates "
-    "online. Validation: inject a known mount error and recover it.",
+    "camera&ndash;IMU time-offset state (<code>td</code>), held <em>frozen</em> in the headline demo while "
+    "the mount calibrates online. Validation: inject a known mount error and recover it. The follow-up "
+    "below revisits both limits with <em>active</em> calibration: a gentle neck scan, and <code>td</code> "
+    "unfrozen against a known injected clock offset.",
     sec("The idea",
         "<p>A real robot's head camera is never mounted exactly where the CAD says, and its frame timestamps are "
         "a few ms out of sync with the IMU clock. The classic fix is a <b>calibration rig</b> (wave a checkerboard "
@@ -182,17 +200,65 @@ calib = shell(
         "covariance <em>reports</em> the anisotropy (the φ_y funnel stays ~6× wider than φ_x).</p>"
         '<div class="take"><span class="t">Takeaway</span>A consistent filter recovers what the trajectory makes '
         'observable and honestly flags what it cannot &mdash; a stronger result than a lucky full recovery. Full '
-        '3-axis + time-offset calibration needs richer rotational excitation than a single yaw-loop.</div>'))
+        '3-axis + time-offset calibration needs richer rotational excitation than a single yaw-loop &mdash; '
+        'which is exactly what the next section goes and buys.</div>')
+    + sec("Active calibration &mdash; the neck-scan retry",
+        "<p>If the yaw-loop cannot excite the weak axes, <b>move the camera</b>: <code>walk.py</code> has a "
+        "neck-pitch &ldquo;look-around&rdquo; scan. This was tried during Stage 3 and <b>hurt</b> &mdash; the "
+        "then-~6 mrad front-end lost KLT tracks under camera pitch. With the front-end sharpened to an honest "
+        "~2 mrad (IRLS refit), <code>run_neckscan.py</code> retries it properly: inject the same 3.1&deg; mount "
+        "error <em>plus a 10 ms camera clock offset</em>, estimate <b>both</b> (td unfrozen), and sweep gentle "
+        "(amplitude, frequency) scans &mdash; measuring the observability gain <em>and</em> the track-quality "
+        "cost, three seeds on the key points.</p>"
+        + fig("stage3_neckscan.png",
+              "Left: what the scan buys — the weak-axis funnel σ φ_y and the time-offset funnel/error. Right: "
+              "what it costs — front-end success is FLAT across the whole sweep (the Stage-3-era track loss is "
+              "gone); the cost surfaces in the filter's chi-square gate at the aggressive 0.6 Hz point.")
+        + "<table><tr><th>scan (commanded &middot; achieved)</th><th>&sigma; &phi;_y (mrad)</th>"
+        "<th>&phi;_y err, median (mrad)</th><th>&sigma; td (ms)</th><th>td err, median (ms)</th>"
+        "<th>front-end</th><th>gate accept</th></tr>"
+        "<tr><td>none (baseline)</td><td class='n'>7.5</td><td class='n'>15.5</td><td class='n'>0.48</td>"
+        "<td class='n'>+0.6</td><td class='n'>77%</td><td class='n'>44%</td></tr>"
+        "<tr><td>0.10 rad &middot; 0.30 Hz (&asymp;1.5&deg;)</td><td class='n'>7.0</td><td class='n'>6.8</td>"
+        "<td class='n'>0.46</td><td class='n'>+1.7</td><td class='n'>74%</td><td class='n'>63%</td></tr>"
+        "<tr><td><b>0.35 rad &middot; 0.30 Hz (&asymp;5.3&deg;)</b></td><td class='n'>4.2</td><td class='n'>7.3</td>"
+        "<td class='n'>0.38</td><td class='n'>&minus;0.6</td><td class='n'>74%</td><td class='n'>66%</td></tr>"
+        "<tr><td>0.35 rad &middot; 0.60 Hz (&asymp;4.7&deg;)</td><td class='n'>4.2</td><td class='n'>2.7</td>"
+        "<td class='n'>0.54</td><td class='n'>+1.7</td><td class='n'>74%</td><td class='n'>40%</td></tr></table>"
+        + '<div class="kv"><div><div class="val green">7.5 &rarr; 4.2</div><div class="lab">&sigma; &phi;_y, weak axis (mrad)</div>'
+        '<div class="src">moderate scan, 0.35 rad &middot; 0.3 Hz</div></div>'
+        '<div><div class="val green">15.5 &rarr; 7.3</div><div class="lab">&phi;_y error, 3-seed median (mrad)</div>'
+        '<div class="src">64% &rarr; 83% of the injection recovered</div></div>'
+        '<div><div class="val">+0.6 ms</div><div class="lab">td recovered, NO scan</div><div class="src">of 10 ms injected &middot; &sigma; 0.5 ms</div></div>'
+        '<div><div class="val warn">66% &rarr; 40%</div><div class="lab">gate accept at 0.6 Hz</div><div class="src">the new trade-off edge</div></div></div>'
+        "<p>Three honest findings. <b>(1) The old failure mode is gone:</b> front-end success stays 74&ndash;77% "
+        "at every amplitude and rate tried &mdash; the sharpened front-end holds its tracks under pitch, so the "
+        "Stage-3-era &ldquo;scanning hurts&rdquo; conclusion was a front-end artifact, not physics. The cost has "
+        "moved downstream: past ~0.3 Hz the <em>fusion gate</em> starts rejecting (44&rarr;66% acceptance at "
+        "gentle scans, collapsing to ~40% at 0.6 Hz, with seed-noisy estimates to match &mdash; the &phi;_y "
+        "median of 2.7 there scatters 0.2&ndash;4.9 across seeds). <b>(2) The scan pays on the mount axes:</b> "
+        "the weak-axis funnel halves (7.5&rarr;4.2 mrad), the recovered error halves with it (15.5&rarr;7.3 mrad), "
+        "and &phi;_z is pinned to ~0.1 mrad. Weak-axis errors sit near 2&sigma; in both cases &mdash; mildly "
+        "optimistic on the hardest axis, unchanged by the scan. <b>(3) A surprise on td:</b> the injected 10 ms "
+        "clock offset is recovered to +0.6 ms <em>without any scan</em> &mdash; the walking gait&rsquo;s "
+        "angular-rate ripple already excites it; the constant-rate degeneracy argument applies to the smoothed "
+        "loop, not to the gait riding on it. Freezing td in the headline demo was conservative, not necessary.</p>"
+        '<div class="take"><span class="t">Takeaway</span>Active calibration works once the front-end is good '
+        'enough to survive it: a moderate look-around (~5&deg; at 0.3 Hz) buys a 2&times; tighter weak-axis '
+        'funnel and a 2&times; better mount estimate at zero front-end cost &mdash; and the chi-square gate '
+        'acceptance rate is the online signal that tells you when you are scanning too hard.</div>'))
 
 # ============================================================ STAGE 4 — embedded noise
 embedded = shell(
     'Stage 4 &mdash; <span class="tick">The Sim-to-Real Gap</span>',
     "Stage 4 — Embedded Noise",
     '<span class="chip ours">embedded pipeline</span><span class="chip warn">timing &gt; amplitude</span>'
-    '<span class="chip green">ablation study</span>',
+    '<span class="chip green">ablation study</span><span class="chip ours">buffer-and-replay fix</span>',
     "The sim-to-real gap for a low-cost humanoid is dominated by the <em>embedded pipeline</em> &mdash; finite "
     "sensor resolution, sequential CAN reads, transport latency, sample jitter &mdash; not physics fidelity. "
-    "This stage injects those effects and stress-tests the estimator to find which ones actually matter.",
+    "This stage injects those effects, stress-tests the estimator to find which ones actually matter &mdash; "
+    "and then <em>fixes</em> the dominant one: with source capture timestamps and buffer-and-replay fusion, "
+    "the timing damage is fully recovered.",
     sec("The model",
         "<p><code>apply_embedded_noise</code> corrupts a logged dataset by re-sampling each sensor stream at its "
         "<em>true</em> (perturbed) capture time and quantizing: encoder/IMU <b>quantization</b> (14-bit / 16-bit LSBs), "
@@ -211,25 +277,152 @@ embedded = shell(
         "<tr><td>+ inter-joint stagger (2 ms)</td><td class='n'>1.51%</td><td class='hw'>hurts</td></tr>"
         "<tr><td>+ transport latency (5 ms)</td><td class='n'>2.04%</td><td class='hw'>hurts most</td></tr>"
         "<tr><td>+ latency (5 ms, uniform — contact delayed too)</td><td class='n'>1.74%</td><td class='hw'>still ~5&times; clean</td></tr>"
-        "<tr><td>+ latency (15 ms)</td><td class='n'>6.5%</td><td class='hw'>catastrophic</td></tr></table>")
+        "<tr><td>+ latency (15 ms)</td><td class='n'>6.46%</td><td class='hw'>catastrophic</td></tr></table>")
+    + sec("The fix — buffer-and-replay on source timestamps",
+        "<p>The timing damage is <b>mis-ordered information, not lost information</b> &mdash; so it is recoverable. "
+        "Each sample now carries its <em>capture</em> time from the master clock (a real pipeline stamps at the "
+        "source MCU, not on arrival). The estimator (<code>timing.py</code>) keeps a ~200 ms rolling buffer of "
+        "filter states, covariances and IMU inputs; a measurement stamped in the past is fused <em>at its stamp</em>: "
+        "roll back to the buffered state, apply it there, then re-propagate the buffered IMU &mdash; and every "
+        "already-fused measurement in between, in order &mdash; forward to now. Encoder and gyro inputs are "
+        "reconstructed per joint at the contact instant (undoing the CAN stagger); a contact flag racing <em>ahead</em> "
+        "of the delayed IMU head waits in a pending queue and fuses at the correct instant via a split of the "
+        "covering IMU interval. With zero delay every path reduces bit-for-bit to the naive loop, and a "
+        "late-delivered measurement provably (tests) matches the posterior of an oracle that received it on time.</p>"
+        + fig("stage4_timing.png",
+              "Left: the same corruption rows, naive vs compensated — every timing row collapses to the clean "
+              "baseline while irreversible quantization sets the all-effects floor. Right: naive drift climbs "
+              "steeply with latency; compensated drift is flat out to 20 ms, and the skew/uniform distinction "
+              "disappears entirely.")
+        + "<table><tr><th>effect</th><th>naive</th><th>compensated</th><th>contact NIS (naive &rarr; comp)</th></tr>"
+        "<tr><td>clean (Gaussian IMU noise only)</td><td class='n'>0.32%</td><td class='n'>0.32%</td><td>6.3 &rarr; 6.3 (bit-identical run)</td></tr>"
+        "<tr><td>+ all embedded effects together</td><td class='n'>0.92%</td><td class='n'>0.70%</td><td>10.5 &rarr; 6.4</td></tr>"
+        "<tr><td>+ quantization only</td><td class='n'>0.32%</td><td class='n'>0.32%</td><td>6.3 &rarr; 6.3</td></tr>"
+        "<tr><td>+ sample jitter (0.8 ms)</td><td class='n'>0.07%</td><td class='n'>0.32%</td><td>6.3 &rarr; 6.3</td></tr>"
+        "<tr><td>+ inter-joint stagger (2 ms)</td><td class='n'>1.51%</td><td class='n'>0.24%</td><td>6.6 &rarr; 6.3</td></tr>"
+        "<tr><td>+ latency 5 ms (vs contact skew)</td><td class='n'>2.04%</td><td class='n'>0.24%</td><td>9.6 &rarr; 6.3</td></tr>"
+        "<tr><td>+ latency 5 ms (uniform)</td><td class='n'>1.74%</td><td class='n'>0.24%</td><td>6.7 &rarr; 6.3</td></tr>"
+        "<tr><td>+ latency 15 ms (vs contact skew)</td><td class='n'>6.46%</td><td class='n'>0.23%</td><td>16.5 &rarr; 6.2</td></tr>"
+        "<tr><td>+ latency 15 ms (uniform)</td><td class='n'>4.61%</td><td class='n'>0.23%</td><td>6.7 &rarr; 6.2</td></tr></table>"
+        + '<div class="kv"><div><div class="val green">flat to 20 ms</div><div class="lab">compensated drift vs latency</div>'
+        '<div class="src">0.21&ndash;0.32% across the sweep</div></div>'
+        '<div><div class="val green">27&times;</div><div class="lab">drift cut at 15 ms latency</div><div class="src">6.46% &rarr; 0.23%</div></div>'
+        '<div><div class="val">NIS 6.3</div><div class="lab">consistency restored</div><div class="src">= clean, every row (was up to 16.5)</div></div>'
+        '<div><div class="val warn">0.70%</div><div class="lab">all-effects floor</div><div class="src">quantization &mdash; amplitude, irreversible</div></div></div>'
+        "<p>Honest footnotes: the naive jitter row&rsquo;s 0.07% is a dither fluke (random skew decorrelating the "
+        "coherent contact error), not a real win &mdash; the compensated filter sits at the honest 0.32%. The "
+        "compensated timing rows land a hair <em>below</em> clean (0.23&ndash;0.24%) because the corruption "
+        "re-samples the noisy streams by linear interpolation, which mildly low-passes the injected sensor noise. "
+        "Position NEES tells the consistency story hardest: at 15 ms latency the naive filter scores 26 "
+        "(confidently wrong &mdash; tight covariance around a bad estimate); compensated returns to ~2.5, "
+        "matching clean&rsquo;s 2.7.</p>"
+        "<p>Seed-firmness (<code>run_timing.py seeds</code>, 3 corruption draws): the <b>compensated</b> timing "
+        "rows hold <b>0.21&ndash;0.24%</b> on every draw &mdash; the pure-latency rows are deterministic and "
+        "identical across seeds &mdash; while the <b>naive</b> side is draw-sensitive: the all-effects "
+        "row&rsquo;s 0.92% above was a <em>favorable</em> roll (3-seed median <b>3.20%</b>, range 0.92&ndash;3.81), "
+        "stagger&rsquo;s 1.51% reached 3.87% on one draw, and the jitter fluke swung 0.07&ndash;0.70%. "
+        "Compensation doesn&rsquo;t just fix the mean &mdash; it removes the draw sensitivity.</p>")
     + sec("Why it ties back to Stage 3",
         "<p>The dominant killer is <b>timing</b> &mdash; latency and the relative skew between sensor streams &mdash; "
         "while sensor <em>precision</em> barely registers &mdash; to close the sim-to-real gap you model the "
-        "pipeline's timing structure, not its amplitude.</p>"
-        '<div class="take"><span class="t">Takeaway</span>Latency is the dominant drift driver &mdash; and Stage 3&rsquo;s '
-        'camera&ndash;IMU time-offset state (<code>td</code>) is the template for the defense: model per-stream '
-        'time offsets as states and calibrate them online &mdash; given a trajectory that excites them &mdash; instead '
-        'of trusting timestamps. Stage 4 says why; Stage 3 shows how (and where the excitation has to come from).</div>'))
+        "pipeline's timing structure, not its amplitude. The defense comes in two complementary halves: when the "
+        "pipeline <em>can</em> stamp at the source, buffer-and-replay above recovers the loss outright; when a "
+        "stream's offset is unknown or unstamped (the camera's clock), Stage 3&rsquo;s approach &mdash; model the "
+        "offset as a filter state (<code>td</code>) and calibrate it online &mdash; is the fallback, given a "
+        "trajectory that excites it.</p>"
+        '<div class="take"><span class="t">Takeaway</span>Latency is the dominant drift driver, and it is the '
+        '<em>recoverable</em> kind of damage: source timestamps + buffer-and-replay collapse a 6.5% failure back '
+        'to the 0.32% baseline, with the covariance honest again. What timestamps cannot buy back &mdash; '
+        'quantization, and a clock offset nobody measured &mdash; is exactly where Stage 3&rsquo;s online '
+        'calibration picks up.</div>'))
 
 # ============================================================ STAGE 5 — navigation
+def nav5b_chart():
+    """The Stage-5b interactive chart: inlined 10 Hz track data + the shared canvas renderer
+    (scripts/trackchart.py, same engine as the vio.html Win chart) + this page's config.
+    The static tracks PNG stays as the no-JS/print fallback."""
+    tracks = os.path.join(ROOT, "data", "nav5b_tracks.json")
+    if not os.path.exists(tracks):
+        raise SystemExit(f"missing {tracks} — run `run_nav5b.py report` first")
+    with open(tracks) as f:
+        data = f.read()
+    json.loads(data)                                    # validate before inlining
+    cfg = """
+(function(){
+  var D=window.NAV5B;if(!D)return;
+  var RUNS=["eskf","vio","naive","replay"],col=D.colors,
+      SHORT={"eskf":"ESKF clean","vio":"VIO in-loop","naive":"naive 5 ms","replay":"replay 5 ms"},
+      NWP=D.wp_per*D.circuits;
+  var gap={};RUNS.forEach(function(v){var r=D.runs[v];gap[v]=r.gt.map(function(g,i){
+    var dx=r.est[i][0]-g[0],dy=r.est[i][1]-g[1];return Math.sqrt(dx*dx+dy*dy)*100;});});
+  var series=[],skey=[];
+  RUNS.forEach(function(v){series.push({pts:D.runs[v].est,color:col[v],dash:[3,4],lw:1,alpha:.55,
+    groups:[v,"est"],scan:true});skey.push(v);});
+  RUNS.forEach(function(v){series.push({pts:D.runs[v].gt,color:col[v],lw:1.5,groups:[v],
+    scan:true,mark:true});skey.push(v);});
+  TrackChart({
+    wrap:"nav5bwrap",canvas:"nav5bchart",legend:"nav5blegend",readout:"nav5bread",
+    fallback:"nav5bfallback",series:series,
+    groups:RUNS.map(function(v){return {key:v,label:SHORT[v],color:col[v]};})
+      .concat([{key:"est",label:"believed paths",color:"#8a95a5",on:false}]),
+    waypoints:D.waypoints,
+    start:{p:D.runs.eskf.gt[0],label:"start / home — every circuit ends here ("+D.circuits+"×)"},
+    idle:(function(){
+      var h="hover the tracks — "+D.circuits+" circuits · "+NWP+" waypoints · seed "+D.seed+
+        " · final est-vs-truth gap:";
+      RUNS.forEach(function(v){var r=D.runs[v],n=r.gt.length-1;
+        h+=" <span style=\\"color:"+col[v]+"\\">"+v+" "+gap[v][n].toFixed(0)+" cm ("+r.reached+
+          "/"+NWP+" @ "+r.t_end.toFixed(1)+" s)</span> ·";});
+      return h.slice(0,-2);
+    })(),
+    fmt:function(si,i,on){
+      var v=skey[si],r=D.runs[v],j=Math.min(i,r.navi.length-1),nv=r.navi[j],
+          cir=Math.min(D.circuits,Math.floor(nv/D.wp_per)+1),
+          wpc=nv<NWP?nv%D.wp_per+1:D.wp_per,
+          t=Math.min(D.t0+i*D.dt,r.t_end),
+          h="t "+t.toFixed(1)+" s · circuit "+cir+"/"+D.circuits+" · wp "+wpc+"/"+D.wp_per+
+            " · <span style=\\"color:"+col[v]+"\\">"+SHORT[v]+"</span> true x "+
+            r.gt[j][0].toFixed(2)+", y "+r.gt[j][1].toFixed(2)+" m";
+      RUNS.forEach(function(u){
+        if(!on[u])return;
+        var k=Math.min(i,D.runs[u].gt.length-1),done=i>D.runs[u].gt.length-1;
+        h+=" · <span style=\\"color:"+col[u]+"\\">"+u+" "+gap[u][k].toFixed(0)+" cm"+
+          (done?" ✓":"")+"</span>";
+      });
+      return h+" <span style=\\"color:var(--faint)\\">(est-vs-truth gap · ✓ = already home)</span>";
+    }
+  });
+})();
+"""
+    return ('<div id="nav5bwrap"><div id="nav5blegend" aria-label="toggle runs"></div>'
+            '<canvas id="nav5bchart"></canvas><div id="nav5bread"></div>'
+            '<div class="cap" style="text-align:left;margin-top:8px">interactive — hover for '
+            't &middot; circuit &middot; per-run est-vs-truth gap &middot; click the legend to '
+            'toggle runs &middot; <b>solid = the true path each run actually walked; dashed = what '
+            'its filter believed</b>. There is no single shared truth line here on purpose: in '
+            'closed loop the estimate <em>steers</em> the robot, so every configuration walks its '
+            'own distinct true trajectory — comparing those solid paths (and each one&rsquo;s gap '
+            'to its own belief) <em>is</em> the experiment</div></div>'
+            + fig("stage5b_tracks.png",
+                  "The true paths of all four configurations over 3 circuits — every run "
+                  "completes the course. Waypoints numbered 1–4, walked three times.",
+                  eid="nav5bfallback")
+            + "<script>window.NAV5B=" + data + ";</script>"
+            + "<script>" + TRACKCHART_JS + cfg + "</script>")
+
+
 nav = shell(
     'Stage 5 &mdash; <span class="tick">Closed-Loop Navigation</span>',
     "Stage 5 — Navigation",
     '<span class="chip ours">estimator &rarr; planner &rarr; command</span>'
-    '<span class="chip green">4/4 waypoints</span><span class="chip amber">on the estimate</span>',
+    '<span class="chip green">4/4 waypoints</span><span class="chip amber">on the estimate</span>'
+    '<span class="chip ours">5b: 3-circuit showdown</span>',
     "The capstone slice: the robot walks to a sequence of waypoints using <em>only its own onboard state "
     "estimate</em>, closing the loop sensors &rarr; estimator &rarr; waypoint planner &rarr; "
-    "<code>VelocityCommand</code> &rarr; gait steering &mdash; the same command interface the real control stack accepts.",
+    "<code>VelocityCommand</code> &rarr; gait steering &mdash; the same command interface the real control stack "
+    "accepts. The follow-up showdown below (5b) then stresses this loop the way the earlier stages predict it "
+    "breaks: three circuits, VIO fused <em>inside</em> the loop, and injected transport latency &mdash; naive vs "
+    "delay-compensated.",
     sec("The loop",
         "<p>Every control step the ESKF ingests the onboard sensors and reports a pose; a <code>WaypointNavigator</code> "
         "turns that pose into a body-frame <code>VelocityCommand(vx, vy, vyaw)</code> toward the active waypoint, which "
@@ -255,7 +448,64 @@ nav = shell(
         "drift and gyro-z bias on every one (median 0.15% vs 0.49%; b<sub>g,z</sub> 0.19 vs 1.66 mrad/s).</p>"
         '<div class="take"><span class="t">Takeaway</span>The whole project reads as one arc &mdash; leg-odometry and '
         'IMU drift in yaw, VIO anchors it, self-calibration keeps the sensors honest, the embedded-noise study says '
-        'timing is what breaks on hardware, and navigation closes the loop and shows why every earlier stage mattered.</div>'))
+        'timing is what breaks on hardware, and navigation closes the loop and shows why every earlier stage mattered.</div>')
+    + sec("Stage 5b &mdash; the closed-loop showdown (3 circuits)",
+        "<p>The follow-up stresses the loop the way the earlier stages predict it breaks: the <b>same 3-circuit "
+        "waypoint course</b> (12 waypoints, ~45 s, ~38 m) driven by four estimator configurations, each navigating "
+        "on its <em>own</em> estimate &mdash; the clean-timing ESKF; <b>VIO in the loop</b> (head-cam frames "
+        "rendered inside the control loop at the 2 Hz keyframe cadence and fused as in Stage 2); and 5 ms transport "
+        "latency + 2 ms CAN stagger applied <em>online</em>, fused <b>naively</b> vs through the Stage-4b "
+        "<b>buffer-and-replay</b> filter steering on its now-cast. Same seed throughout.</p>"
+        "<p>Metric honesty first: the headline numbers are the <b>true closest approach to each waypoint</b> and "
+        "the <b>estimate-vs-truth gap over time</b>. Final-position error is deliberately <em>not</em> reported as "
+        "a headline &mdash; the course returns home, so closing geometry flatters it. And a closed navigation loop "
+        "<em>hides</em> estimator damage by construction: the planner continuously re-aims at the goal <em>as it "
+        "believes it to be</em>, so waypoint success stays high while the truth quietly walks away &mdash; the gap "
+        "and yaw columns are where the damage shows.</p>"
+        + nav5b_chart()
+        + fig("stage5b_gap.png",
+              "The estimate-vs-truth gap over time — what the planner does not know. The shared spike at ~3 s "
+              "is the first hard 90° pivot (turn slip), common to all runs. Naive latency (amber) runs the "
+              "widest gap and the most terminal yaw; replay compensation (green) sits back on the clean baseline.")
+        + "<table><tr><th>configuration</th><th>waypoints</th><th>time</th>"
+        "<th>worst true closest-approach per circuit (cm)</th><th>mean (cm)</th>"
+        "<th>est-gap med / max (cm)</th><th>terminal yaw err</th></tr>"
+        "<tr><td>ESKF &middot; clean timing</td><td class='n'>12/12</td><td class='n'>44.4 s</td>"
+        "<td class='n'>40.0 / 29.8 / 36.3</td><td class='n'>23.5</td><td class='n'>32.3 / 83.6</td><td class='n'>3.6&deg;</td></tr>"
+        "<tr><td>VIO in the loop (2 Hz keyframes)</td><td class='n'>12/12</td><td class='n'>44.1 s</td>"
+        "<td class='n'>40.3 / 32.5 / 37.9</td><td class='n'>24.3</td><td class='n'>30.6 / 76.7</td><td class='n'>3.7&deg;</td></tr>"
+        "<tr><td>ESKF &middot; 5 ms latency + stagger, naive</td><td class='n'>12/12</td><td class='n'>43.9 s</td>"
+        "<td class='n'>36.3 / 34.6 / 31.8</td><td class='n'>22.5</td><td class='n'>30.6 / 86.3</td><td class='n'>5.7&deg;</td></tr>"
+        "<tr><td>ESKF &middot; same latency, replay-compensated</td><td class='n'>12/12</td><td class='n'>44.4 s</td>"
+        "<td class='n'>37.6 / 25.8 / 33.6</td><td class='n'>22.0</td><td class='n'>29.3 / 76.2</td><td class='n'>3.7&deg;</td></tr></table>"
+        + '<div class="kv"><div><div class="val green">12/12</div><div class="lab">every configuration completes</div>'
+        '<div class="src">3 circuits &middot; ~44 s &middot; seed 0</div></div>'
+        '<div><div class="val">5.7&deg; &rarr; 3.7&deg;</div><div class="lab">terminal yaw &middot; naive &rarr; replay</div>'
+        '<div class="src">replay restores the clean number</div></div>'
+        '<div><div class="val warn">98&deg;</div><div class="lab">terminal yaw at &sigma;_c = 0.05</div>'
+        '<div class="src">10/12 &mdash; the real closed-loop killer</div></div>'
+        '<div><div class="val">28</div><div class="lab">vision updates fused in-loop</div>'
+        '<div class="src">151 keyframes &middot; turns break tracks</div></div></div>'
+        "<p>Three honest findings. <b>(1) The decisive variable was not on the matrix.</b> A baseline check "
+        "(<code>data/nav5b_eskf005_check.npz</code>) ran the course with <code>run_nav.py</code>'s short-path "
+        "contact trust &sigma;<sub>c</sub> = 0.05: over three circuits of repeated 90&deg; pivots the Stage-2 "
+        "turn-slip b<sub>g</sub> runaway accumulates and the run <em>fails</em> &mdash; 10/12 waypoints, a 6.9 m "
+        "peak gap, 98&deg; of terminal yaw error. In-loop VIO <em>rescues</em> that mistuned filter (12/12 at "
+        "17&deg;), and simply loosening to &sigma;<sub>c</sub> = 0.15 &mdash; the Stage-2 lesson &mdash; fixes it "
+        "outright; the matrix above runs 0.15 everywhere. <b>(2) 5 ms of latency is survivable in closed loop "
+        "&mdash; but it is not free:</b> the naive run finishes the course, yet carries ~54% more terminal yaw "
+        "error and the widest gap excursions; replay compensation returns every column to the clean baseline, "
+        "consistent with the open-loop Stage-4b result. <b>(3) In-loop VIO adds little on this course:</b> at the "
+        "2 Hz keyframe cadence the sharp pivots break KLT tracks (37 measurements, 28 fused, in 151 keyframes "
+        "&mdash; even with a gyro-seeded LK initial guess), and 44 s at &sigma;<sub>c</sub> = 0.15 accrues only "
+        "~3.6&deg; of yaw for it to fix. Vision earns its keep on long horizons (the 3-lap monitor above) and as "
+        "the rescue in finding 1 &mdash; not on a well-tuned short course.</p>"
+        '<div class="take"><span class="t">Takeaway</span>Closed-loop navigation grades on a curve &mdash; '
+        're-aiming hides estimator error, so success metrics must be chosen adversarially (true closest approach, '
+        'est-vs-truth gap, terminal yaw). On those metrics the stack holds: replay compensation neutralizes '
+        'injected latency in the loop, and the one configuration that truly fails is the one that over-trusts '
+        'its contact model &mdash; the same lesson Stage 2 taught, now with a navigation-grade price tag.</div>'),
+    extra_css=chart_css("nav5b"))
 
 # ============================================================ STAGE 2 — front-end sharpening
 frontend = shell(

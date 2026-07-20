@@ -5,8 +5,12 @@ measurements, and fuses them into the VioESKF. Compares three estimators on the 
 (raw-gyro attitude), the Stage-1 ESKF (IMU+contact, no vision), and VIO (ESKF + vision) — on final
 position error / drift, end-of-lap yaw error, and gyro-bias-z (the axis Stage 1 couldn't observe).
 
-    .venv/bin/python scripts/run_vio.py
+    .venv/bin/python scripts/run_vio.py             # single lap (the Stage-2 headline numbers)
+    .venv/bin/python scripts/run_vio.py sweep       # 5-seed medians
+    .venv/bin/python scripts/run_vio.py multilap    # 3 laps, uncalibrated gyro bias — the visual Win
+                                                    #   (tracks + drift-vs-time figs + JSON for vio.html)
 """
+import json
 import os
 
 import cv2
@@ -23,7 +27,13 @@ from humanoid_asimov.vision import AnchorRotationEstimator, CameraModel, Feature
 from humanoid_asimov.walk import loop_heading, simulate
 
 RENDERS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "renders"))
+DATA = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data"))
 PERIOD, KF_EVERY, ANCHOR_MAX_AGE, ANCHOR_MIN_SHARED = 24.0, 15, 2.0, 30
+# Multi-lap: the realistic uncalibrated gyro bias run_livedrift.py uses (esp. z/yaw, ~0.23°/s) — the
+# estimators must learn it online; leg-odom drifts on it and only vision pins the yaw component. Long
+# anchors (4 s vs 2) let the yaw-drift information accumulate across laps (same as run_livedrift).
+MULTILAP_BIAS = (0.0015, 0.0015, 0.004)
+MULTILAP_ANCHOR_AGE = 4.0
 # Honest measurement noise: run_frontend measures median |err| ≈ 2 mrad with |bias| ≈ 0.4 after the
 # front-end refit + textured-wall scene (see docs/STAGE2_FRONTEND_DESIGN.md) — σ_r = 2 mrad now BOUNDS
 # the measured error instead of under-stating the old ~5 mrad one.
@@ -38,7 +48,7 @@ def _wrap(a):
     return (a + np.pi) % (2 * np.pi) - np.pi
 
 
-def frontend(frames, fidx, ft_t, log, ext):
+def frontend(frames, fidx, ft_t, log, ext, anchor_max_age=ANCHOR_MAX_AGE):
     """Run the front-end; return keyframes = [(cur_log_idx, R_meas or None, clone_after)].
 
     Anchors persist up to ANCHOR_MAX_AGE (long spans carry the yaw-drift information — over a 0.5 s
@@ -69,7 +79,7 @@ def frontend(frames, fidx, ft_t, log, ext):
             m = anchor.estimate(tt, tracks, R_prior=R_prior)
             n_meas += m is not None
         n_shared = sum(1 for x in tracks if x in anchor.anchor_uv) if anchor_idx is not None else 0
-        reanchor = (anchor_idx is None or m is None or (tt - anchor.anchor_t) > ANCHOR_MAX_AGE
+        reanchor = (anchor_idx is None or m is None or (tt - anchor.anchor_t) > anchor_max_age
                     or n_shared < ANCHOR_MIN_SHARED)
         keyframes.append((i, m["R"] if m is not None else None, reanchor))
         if reanchor:
@@ -77,9 +87,11 @@ def frontend(frames, fidx, ft_t, log, ext):
     return keyframes, n_meas
 
 
-def main(seed=0, plot=True):
-    _, _, log, frames = simulate(seconds=PERIOD, heading=loop_heading(PERIOD), environment=True,
-                                 render_camera="head_cam", fps=30, imu_noise=ImuNoise(), seed=seed)
+def main(seed=0, plot=True, laps=1):
+    imu = ImuNoise() if laps == 1 else ImuNoise(gyro_bias=np.array(MULTILAP_BIAS))
+    anchor_age = ANCHOR_MAX_AGE if laps == 1 else MULTILAP_ANCHOR_AGE
+    _, _, log, frames = simulate(seconds=laps * PERIOD, heading=loop_heading(PERIOD), environment=True,
+                                 render_camera="head_cam", fps=30, imu_noise=imu, seed=seed)
     frames = np.array(frames)
     t, gyro, accel = log["t"], log["gyro"], log["accel"]
     enc_q, enc_qd, contact = log["enc_q"], log["enc_qd"], log["contact"]
@@ -89,7 +101,7 @@ def main(seed=0, plot=True):
 
     kin = RobotKinematics()
     ext = HeadCamExtrinsics(kin)
-    keyframes, n_meas = frontend(frames, fidx, log["frame_t"], log, ext)
+    keyframes, n_meas = frontend(frames, fidx, log["frame_t"], log, ext, anchor_max_age=anchor_age)
     kf_by_idx = {i: (Rm, ca) for (i, Rm, ca) in keyframes}
     print(f"front-end: {len(keyframes)} keyframes, {n_meas} rotation measurements")
 
@@ -100,6 +112,7 @@ def main(seed=0, plot=True):
     vio = VioESKF(kin, p0, R0, sig_contact=0.15, sig_vis=SIG_VIS)
     lo, R_gyro = LegOdometry(kin, p0), R0.copy()
     tr = {"leg-odom": [], "ESKF": [], "VIO": []}
+    yw = {"leg-odom": [], "ESKF": [], "VIO": []}                   # per-step yaw (drift-vs-time figure)
     for k in range(len(t)):
         eskf.step(gyro[k], accel[k], enc_q[k], enc_qd[k], jn, contact[k], dt)
         vio.step(gyro[k], accel[k], enc_q[k], enc_qd[k], jn, contact[k], dt)
@@ -113,12 +126,13 @@ def main(seed=0, plot=True):
         R_gyro = R_gyro @ exp_so3(gyro[k] * dt)                    # raw gyro attitude (drifts on bias)
         lo.step(R_gyro, enc_q[k], jn, contact[k])
         tr["leg-odom"].append(lo.p.copy()); tr["ESKF"].append(eskf.p.copy()); tr["VIO"].append(vio.p.copy())
+        yw["leg-odom"].append(_yaw(R_gyro)); yw["ESKF"].append(_yaw(eskf.R)); yw["VIO"].append(_yaw(vio.R))
 
     path = float(np.sum(np.linalg.norm(np.diff(gt_pos[:, :2], axis=0), axis=1)))
     gt_yaw = _yaw(quat2mat(gt_quat[-1]))
     yaw_est = {"leg-odom": _yaw(R_gyro), "ESKF": _yaw(eskf.R), "VIO": _yaw(vio.R)}
     dr = {}
-    print(f"\n=== loop drift (path {path:.1f} m, seed {seed}) ===")
+    print(f"\n=== loop drift ({laps} lap{'s' if laps > 1 else ''}, path {path:.1f} m, seed {seed}) ===")
     print(f"{'estimator':10} {'final err':>10} {'drift':>8} {'yaw err':>10}")
     for name in ("leg-odom", "ESKF", "VIO"):
         p = np.array(tr[name])
@@ -132,17 +146,71 @@ def main(seed=0, plot=True):
           f"VIO {vio.bg[2]*1e3:+.2f} (err {bgz['VIO']:+.2f})")
 
     if plot:
+        colors = (("leg-odom", "#e0a030"), ("ESKF", "#e05050"), ("VIO", "#3fd0c9"))
         fig, ax = plt.subplots(figsize=(7, 7))
         ax.plot(gt_pos[:, 0], gt_pos[:, 1], "k--", lw=1.5, label="ground truth")
-        for name, c in (("leg-odom", "#e0a030"), ("ESKF", "#e05050"), ("VIO", "#3fd0c9")):
+        for name, c in colors:
             p = np.array(tr[name])
             ax.plot(p[:, 0], p[:, 1], color=c, lw=1.3, label=name)
+            if laps > 1:
+                ax.plot(p[-1, 0], p[-1, 1], "x", color=c, ms=9, mew=2.2, zorder=6)
         ax.scatter(*gt_pos[0, :2], c="g", s=60, zorder=5, label="start")
-        ax.set_aspect("equal"); ax.grid(alpha=.3); ax.legend(); ax.set_title("VIO loop — ground tracks")
-        ax.set_xlabel("x (m)"); ax.set_ylabel("y (m)")
+        if laps > 1:                                           # the honest scoreboard, on the figure
+            gaps = " · ".join(f"{n} {np.linalg.norm(np.array(tr[n])[-1, :2] - gt_pos[-1, :2]) * 100:.0f} cm"
+                              for n, _ in colors)
+            ax.text(0.5, 0.035, f"close-gap after {laps} laps (×): {gaps}", transform=ax.transAxes,
+                    ha="center", fontsize=9, bbox=dict(fc="w", ec="#999", alpha=0.85))
+        ax.set_aspect("equal"); ax.grid(alpha=.3); ax.legend()
+        title = ("VIO loop — ground tracks" if laps == 1 else
+                 f"VIO loop — ground tracks, {laps} laps ({laps * PERIOD:.0f} s, uncalibrated gyro bias)")
+        ax.set_title(title); ax.set_xlabel("x (m)"); ax.set_ylabel("y (m)")
         os.makedirs(RENDERS, exist_ok=True)
-        fig.tight_layout(); fig.savefig(os.path.join(RENDERS, "stage2_vio.png"), dpi=110)
-        print(f"saved {os.path.join(RENDERS, 'stage2_vio.png')}")
+        name_tracks = "stage2_vio.png" if laps == 1 else f"stage2_vio_{laps}lap.png"
+        fig.tight_layout(); fig.savefig(os.path.join(RENDERS, name_tracks), dpi=110)
+        print(f"saved {os.path.join(RENDERS, name_tracks)}")
+
+    if laps > 1:
+        gt_yaw_t = np.array([_yaw(quat2mat(q)) for q in gt_quat])
+        yerr = {n: np.abs(np.degrees(_wrap(np.array(yw[n]) - gt_yaw_t))) for n in yw}
+        perr = {n: np.linalg.norm(np.array(tr[n])[:, :2] - gt_pos[:, :2], axis=1) for n in tr}
+        lap_idx = [min(len(t) - 1, int(round((l + 1) * PERIOD / dt)) - 1) for l in range(laps)]
+        print(f"|yaw error| (deg) at lap ends: " + " | ".join(
+            f"{n} " + "/".join(f"{yerr[n][i]:.1f}" for i in lap_idx) for n in yerr))
+
+        if plot:
+            fig, (a1, a2) = plt.subplots(1, 2, figsize=(13, 5))
+            for name, c in colors:
+                a1.plot(t, yerr[name], color=c, lw=1.5, label=name)
+                a2.plot(t, perr[name] * 100, color=c, lw=1.5, label=name)
+            for a in (a1, a2):
+                for l in range(1, laps):
+                    a.axvline(l * PERIOD, color="k", ls=":", alpha=0.3)
+                a.set_xlabel("t (s)"); a.legend(); a.grid(alpha=.3)
+            a1.set_ylabel("|yaw error| (deg)"); a1.set_title("yaw drift — unbounded without vision")
+            a2.set_ylabel("position error (cm)"); a2.set_title("position error (oscillates over a closed loop)")
+            fig.suptitle(f"Stage 2 — drift vs time over {laps} laps (seed {seed})", fontsize=13)
+            name_drift = f"stage2_vio_{laps}lap_drift.png"
+            fig.tight_layout(); fig.savefig(os.path.join(RENDERS, name_drift), dpi=110)
+            print(f"saved {os.path.join(RENDERS, name_drift)}")
+
+        # decimated track/error arrays for the vio.html interactive Win chart (scripts/embed_vio_win.py)
+        step = max(1, int(round(0.1 / dt)))                        # ~10 Hz points — plenty for hover
+        sl = slice(0, len(t), step)
+        rnd = lambda a, nd=3: np.round(np.asarray(a, float), nd).tolist()
+        payload = {
+            "laps": laps, "period_s": PERIOD, "seed": seed, "path_m": round(path, 1),
+            "imu_bias_z_dps": round(np.degrees(MULTILAP_BIAS[2]), 2),
+            "t": rnd(t[sl], 2), "gt": rnd(gt_pos[sl, :2]),
+            "est": {n: {"xy": rnd(np.array(tr[n])[sl, :2]), "err_m": rnd(perr[n][sl]),
+                        "yaw_err_deg": rnd(yerr[n][sl], 2)} for n in tr},
+            "final_yaw_err_deg": {n: round(float(yerr[n][-1]), 1) for n in yerr},
+            "final_pos_err_cm": {n: round(float(perr[n][-1] * 100), 1) for n in perr},
+        }
+        os.makedirs(DATA, exist_ok=True)
+        out = os.path.join(DATA, f"vio_tracks_{laps}lap.json")
+        with open(out, "w") as f:
+            json.dump(payload, f, separators=(",", ":"))
+        print(f"saved {out} ({os.path.getsize(out) // 1024} KB)")
     return {"seed": seed, "drift": dr, "bgz_err": bgz}
 
 
@@ -165,5 +233,7 @@ if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "sweep":
         sweep()
+    elif len(sys.argv) > 1 and sys.argv[1] == "multilap":
+        main(int(sys.argv[2]) if len(sys.argv) > 2 else 0, laps=3)
     else:
         main(int(sys.argv[1]) if len(sys.argv) > 1 else 0)

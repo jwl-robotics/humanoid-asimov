@@ -30,7 +30,7 @@ def main(seed=0):
     st = {"e": None}
     est, cmd = [], []
 
-    def hook(t, gyro, accel, enc_q, enc_qd, contact, dt, ctrl, gt_pos, gt_quat):
+    def hook(t, gyro, accel, enc_q, enc_qd, contact, dt, ctrl, gt_pos, gt_quat, frame=None):
         e = st["e"]
         if e is None:                                          # init once at the known start pose
             # ESKF default sig_contact=0.05: verified best for this SHORT path (7.1 vs 9.6 cm at 0.15). The

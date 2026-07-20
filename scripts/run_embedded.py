@@ -1,7 +1,9 @@
 """Stage 4 — embedded-noise robustness: run the estimator on the clean dataset vs with the embedded
 pipeline noise and ablate which effect hurts. Finding: TIMING breaks the estimator, amplitude does not —
 latency is the dominant driver (even a uniform latency, contact delayed too, costs ~5x the clean drift at
-5 ms), inter-sensor skew adds on top, and quantization/jitter are negligible.
+5 ms), inter-sensor skew adds on top, and quantization/jitter are negligible. The follow-up,
+scripts/run_timing.py, re-runs this grid with buffer-and-replay delay compensation (timing.py) and
+recovers every timing row back to the clean baseline.
 
     .venv/bin/python scripts/run_embedded.py
 """
